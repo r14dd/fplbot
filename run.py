@@ -19,6 +19,7 @@ from fplbot import api
 from fplbot.model import Model, Player
 from fplbot.optimize import BUDGET, best_xi, pick_squad, suggest_transfers
 from fplbot.report import build as build_report
+from fplbot.card import card, render
 
 ROOT = Path(__file__).resolve().parent
 SQUAD_FILE = ROOT / "my_squad.json"
@@ -199,6 +200,17 @@ def cmd_sync(args) -> None:
     show_squad(model, squad, gws)
 
 
+def cmd_compare(args) -> None:
+    model = load_model(args.refresh)
+    start = args.start or model.next_gw
+    near = (start, start + args.horizon - 1)
+    far = (start, args.until)
+    model.project(list(range(start, args.until + 1)))
+    cards = [card(model, resolve(model, t), near, far) for t in args.players]
+    print()
+    print(render(cards, near, far))
+
+
 def cmd_refresh(args) -> None:
     api.bootstrap(force=True)
     api.fixtures(force=True)
@@ -235,6 +247,14 @@ def main() -> None:
     s = sub.add_parser("sync", parents=[common], help="pull your squad from the FPL site")
     s.add_argument("--entry", type=int, required=True)
     s.set_defaults(func=cmd_sync)
+
+    s = sub.add_parser("compare", parents=[common],
+                       help="side-by-side factor cards for players (Name or Name@CLUB)")
+    s.add_argument("players", nargs="+")
+    s.add_argument("--start", type=int, help="first GW to evaluate from (default: next)")
+    s.add_argument("--until", type=int, default=19,
+                   help="last GW of the long horizon (default 19, chip reset)")
+    s.set_defaults(func=cmd_compare)
 
     s = sub.add_parser("refresh", parents=[common], help="force re-download of all data")
     s.set_defaults(func=cmd_refresh)
