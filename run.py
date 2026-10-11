@@ -20,6 +20,7 @@ from fplbot.model import Model, Player
 from fplbot.optimize import BUDGET, best_xi, pick_squad, suggest_transfers
 from fplbot.report import build as build_report
 from fplbot.card import card, render
+from fplbot import rank as rk
 
 ROOT = Path(__file__).resolve().parent
 SQUAD_FILE = ROOT / "my_squad.json"
@@ -211,6 +212,41 @@ def cmd_compare(args) -> None:
     print(render(cards, near, far))
 
 
+def cmd_rank(args) -> None:
+    model = load_model(args.refresh)
+    gw = args.gw or model.next_gw
+    model.project([gw])
+    cur = model.started_gw
+    k = rk.dispersion(list(range(1, model.finished_gws + 1)))
+    mgrs = []
+    for r in rk.standings(args.league):
+        picks = rk.rival_picks(r["entry"], cur)
+        mgrs.append({**r, "picks": picks})
+    me = next(m for m in mgrs if m["entry"] == args.entry)
+    by_id = model.by_id()
+    ranks, means = rk.simulate(model, gw, mgrs, args.sims, k)
+    if args.tc:
+        base = ranks[mgrs.index(me)][1] / args.sims
+        me["picks"] = [(p, 3 if mu == 2 else mu) for p, mu in me["picks"]]
+        ranks, means = rk.simulate(model, gw, mgrs, args.sims, k)
+        print(f"  Triple Captain on: P(1st) {base:.1%} -> {ranks[mgrs.index(me)][1]/args.sims:.1%}")
+    print(f"  GW{gw}, {args.sims} sims, dispersion {k:.2f}; rivals frozen on GW{cur} squads")
+    print("  not modelled: team correlation, rival chips/transfers, autosubs")
+    print(f"  {'manager':<22}{'total':>6}{'xGW':>7}{'P(1st)':>8}{'P(top2)':>9}")
+    for i, m in sorted(enumerate(mgrs), key=lambda t: -ranks[t[0]][1]):
+        n = args.sims
+        print(f"  {m['name']:<22}{m['total']:>6}{means[i]:>7.1f}"
+              f"{ranks[i][1]/n:>8.1%}{(ranks[i][1]+ranks[i][2])/n:>9.1%}")
+    xi = sorted(me["picks"], key=lambda t: -by_id[t[0]].xpts_by_gw.get(gw, 0))[:5]
+    print(f"\n  {me['name']} captain readout (P(1st)):")
+    mi = mgrs.index(me)
+    for pid, _ in xi:
+        alt = [{**m, "picks": [(p, (2 if p == pid else 1) if m is me else mu) for p, mu in m["picks"]]}
+               if m is me else m for m in mgrs]
+        rr, _m = rk.simulate(model, gw, alt, args.sims, k)
+        print(f"    {by_id[pid].name:<14}{by_id[pid].xpts_by_gw.get(gw,0):>5.1f} xP  {rr[mi][1]/args.sims:>6.1%}")
+
+
 def cmd_refresh(args) -> None:
     api.bootstrap(force=True)
     api.fixtures(force=True)
@@ -255,6 +291,14 @@ def main() -> None:
     s.add_argument("--until", type=int, default=19,
                    help="last GW of the long horizon (default 19, chip reset)")
     s.set_defaults(func=cmd_compare)
+
+    s = sub.add_parser("rank", parents=[common], help="mini-league rank simulation")
+    s.add_argument("--gw", type=int)
+    s.add_argument("--sims", type=int, default=10000)
+    s.add_argument("--league", type=int, default=1116741)
+    s.add_argument("--entry", type=int, default=6412208)
+    s.add_argument("--tc", action="store_true", help="triple your captain")
+    s.set_defaults(func=cmd_rank)
 
     s = sub.add_parser("refresh", parents=[common], help="force re-download of all data")
     s.set_defaults(func=cmd_refresh)

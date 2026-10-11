@@ -92,3 +92,11 @@ def entry_history(entry_id: int, force: bool = False) -> dict:
 
 def entry_picks(entry_id: int, gw: int, force: bool = False) -> dict:
     return get(f"entry/{entry_id}/event/{gw}/picks", force)
+
+
+def league_standings(league_id: int, force: bool = False) -> dict:
+    return get(f"leagues-classic/{league_id}/standings", force)
+
+
+def event_live(gw: int, force: bool = False) -> dict:
+    return get(f"event/{gw}/live", force)
