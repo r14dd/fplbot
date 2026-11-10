@@ -39,7 +39,7 @@ def _draw(p, gw: int, k: float, rng: random.Random) -> float:
     xp = p.xpts_by_gw.get(gw, 0.0)
     if xp <= 0:
         return 0.0
-    p_play = min(1.0, p.availability * p.exp_mins / 80.0)
+    p_play = min(1.0, p.avail_by_gw.get(gw, p.availability) * p.exp_mins / 80.0)
     if p_play <= 0 or rng.random() > p_play:
         return 0.0
     lam = max(xp / p_play - 2.0, 0.0)

@@ -95,13 +95,15 @@ def load_squad(model: Model) -> tuple[list[Player], float, int, dict]:
     return players, float(d.get("bank", 0)), int(d.get("free_transfers", 1)), d.get("sell_prices", {})
 
 
-def save_squad(squad: list[Player], bank: float, ft: int, sell: dict | None = None) -> None:
+def save_squad(squad: list[Player], bank: float, ft: int, sell: dict | None = None,
+               entry: int | None = None) -> None:
     SQUAD_FILE.write_text(
         json.dumps(
             {
                 "_comment": "Edit 'players' freely — it is the source of truth. "
                             "Use Name@CLUB if a name is ambiguous. 'player_ids' is "
                             "informational only and is not read back.",
+                "entry": entry,
                 "bank": round(bank, 1),
                 "free_transfers": ft,
                 "players": [f"{p.name}@{p.team_short}" for p in squad],
@@ -163,7 +165,7 @@ def cmd_week(args) -> None:
     if SQUAD_FILE.exists():
         squad, bank, ft, sell = load_squad(model)
         sell = {int(k): float(v) for k, v in (sell or {}).items()}
-    md = build_report(model, gws, squad, bank or 0.0, ft or 1, sell)
+    md = build_report(model, gws, squad, bank or 0.0, 1 if ft is None else ft, sell)
     REPORTS.mkdir(exist_ok=True)
     out = REPORTS / f"GW{gws[0]:02d}.md"
     out.write_text(md)
@@ -181,9 +183,10 @@ def cmd_transfers(args) -> None:
     for m in moves:
         print(f"    OUT {m['out'].name:<18} -> IN {m['in'].name:<18} "
               f"({m['in'].team_short}, £{m['in'].price:.1f})  "
-              f"{m['gain']:+.2f} xP   ITB £{m['bank_after']:.1f}m")
-    if moves and moves[0]["gain"] < 1.0:
-        print("\n  Best move gains < 1 xP — rolling the transfer is likely better.")
+              f"{m['gain']:+.2f} xP  net {m['net']:+.2f}   ITB £{m['bank_after']:.1f}m")
+    if moves and moves[0]["net"] < 1.0:
+        print("\n  Best move nets < 1 xP after the 4-point hit — don't transfer." if ft == 0 else
+              "\n  Best move gains < 1 xP — rolling the transfer is likely better.")
 
 
 def cmd_sync(args) -> None:
@@ -212,7 +215,7 @@ def cmd_sync(args) -> None:
     # transfers already made for the coming deadline are not in the history yet
     pending = sum(t["event"] > gw for t in api.get(f"entry/{args.entry}/transfers/", force=True))
     ft = max(free_transfers(api.entry_history(args.entry, force=True)) - pending, 0)
-    save_squad(squad, bank, ft, sell)
+    save_squad(squad, bank, ft, sell, args.entry)
     gws = horizon_gws(model, args.horizon)
     model.project(gws)
     show_squad(model, squad, gws, bank)
@@ -242,7 +245,9 @@ def cmd_rank(args) -> None:
         mgrs.append({**r, "picks": picks})
     me = next(m for m in mgrs if m["entry"] == args.entry)
     by_id = model.by_id()
-    mine = SQUAD_FILE.exists()
+    # The saved squad belongs to the entry that synced it; never graft it onto a rival.
+    # A file with no entry (hand-made, or 'squad --save') is taken to be yours.
+    mine = SQUAD_FILE.exists() and json.loads(SQUAD_FILE.read_text()).get("entry") in (None, args.entry)
     if mine:
         # Rivals stay frozen on last week's XI; you are simulated on the best XI
         # from the saved squad, keeping last week's captain if he still starts.

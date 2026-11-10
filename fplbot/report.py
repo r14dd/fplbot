@@ -140,18 +140,19 @@ def build(
             L.append(f"## Transfer options (bank £{bank:.1f}m, "
                      f"{free_transfers} free)")
             L.append("")
-            L.append("| Out | In | Gain (xP) | Bank after |")
-            L.append("|-----|----|-----------|------------|")
+            L.append("| Out | In | Gain (xP) | Net of hit | Bank after |")
+            L.append("|-----|----|-----------|------------|------------|")
             for m in moves:
                 L.append(
                     f"| {m['out'].name} ({m['out'].price:.1f}) | "
                     f"{m['in'].name} ({m['in'].team_short}, {m['in'].price:.1f}) | "
-                    f"{m['gain']:+.2f} | £{m['bank_after']:.1f}m |"
+                    f"{m['gain']:+.2f} | {m['net']:+.2f} | £{m['bank_after']:.1f}m |"
                 )
             L.append("")
-            top = moves[0]
-            if top["gain"] < 1.0:
-                L.append("_Best available move gains under 1 xP — rolling the "
+            if moves[0]["net"] < 1.0:
+                L.append("_Best move nets under 1 xP after the 4-point hit — "
+                         "don't transfer._" if free_transfers == 0 else
+                         "_Best available move gains under 1 xP — rolling the "
                          "transfer is likely better than using it._")
             L.append("")
 
@@ -161,7 +162,7 @@ def build(
         cands = [
             p
             for p in model.players
-            if p.pos == pos and p.availability > 0 and not p.data_thin
+            if p.pos == pos and model.horizon(p, gws) > 0 and not p.data_thin
         ]
         cands.sort(key=lambda p: model.horizon(p, gws), reverse=True)
         L.append(f"### {POS_NAME[pos]}")

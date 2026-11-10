@@ -13,7 +13,9 @@ correction below, which is a small adjustment term, not the baseline.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
+from datetime import date, datetime
 
 POS_NAME = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
 
@@ -36,6 +38,26 @@ MIN_MINUTES_TRUSTED = 450  # below this, flag the projection as thin
 START_PRIOR = 0.5          # prior probability a player starts, before evidence
 SHRINK_STARTS = 4.0        # matches of evidence needed to move off that prior
 
+# "Suspended until 5 Dec", "Knee injury - Expected back 22 Nov"
+RETURN_RE = re.compile(r"(?:until|Expected back) (\d{1,2} [A-Z][a-z]{2})\b")
+
+
+def _return_date(news: str, news_added: str | None) -> date | None:
+    """Return date from the news text; the year comes from when it was posted."""
+    m = RETURN_RE.search(news or "")
+    if not m or not news_added:
+        return None
+    added = datetime.fromisoformat(news_added.replace("Z", "+00:00")).date()
+    # A date a little before the post is stale text (already back), not next year.
+    for year in (added.year, added.year + 1):
+        try:
+            d = datetime.strptime(f"{m.group(1)} {year}", "%d %b %Y").date()
+        except ValueError:  # 29 Feb in a non-leap year
+            continue
+        if (d - added).days >= -180:
+            return d
+    return None
+
 
 @dataclass
 class Player:
@@ -57,20 +79,23 @@ class Player:
     selected_by: float
     news: str
     pens_order: int | None
+    news_added: str | None = None
     # derived
     pp90: float = 0.0
     exp_mins: float = 0.0
-    availability: float = 1.0
+    availability: float = 1.0   # next round only, as the API means it
+    return_date: date | None = None
     data_thin: bool = False
     xpts_by_gw: dict = field(default_factory=dict)
+    avail_by_gw: dict = field(default_factory=dict)
 
     @property
     def pos_name(self) -> str:
         return POS_NAME[self.pos]
 
     @property
-    def per_game(self) -> float:
-        return self.pp90 * self.exp_mins / 90.0 * self.availability
+    def fit_per_game(self) -> float:
+        return self.pp90 * self.exp_mins / 90.0
 
 
 class Model:
@@ -79,6 +104,10 @@ class Model:
         self.fixtures = fixtures
         self.teams = {t["id"]: t for t in bootstrap["teams"]}
         self.events = bootstrap["events"]
+        self.deadlines = {
+            e["id"]: datetime.fromisoformat(e["deadline_time"].replace("Z", "+00:00")).date()
+            for e in self.events
+        }
         self.formation = {
             et["id"]: (et["squad_min_play"], et["squad_max_play"])
             for et in bootstrap["element_types"]
@@ -178,7 +207,9 @@ class Model:
                 selected_by=float(e.get("selected_by_percent") or 0),
                 news=e.get("news") or "",
                 pens_order=e.get("penalties_order"),
+                news_added=e.get("news_added"),
             )
+            p.return_date = _return_date(p.news, p.news_added)
             self.players.append(p)
 
         priors = self._positional_priors()
@@ -240,6 +271,19 @@ class Model:
             return p.chance / 100.0
         return 1.0 if p.status == "a" else 0.0
 
+    def availability_in(self, p: Player, gw: int) -> float:
+        """The flag covers only the weeks it is about.
+
+        A dated flag (ban, "Expected back") lasts until that date; a doubtful
+        percentage is about the next round only; an undated injury or a player
+        who has left the club stays out for the whole run.
+        """
+        if gw == self.next_gw or p.availability >= 1 or p.status == "u":
+            return p.availability
+        if p.return_date:
+            return p.availability if self.deadlines.get(gw, date.max) < p.return_date else 1.0
+        return 1.0 if p.status == "d" else p.availability
+
     # ---------- fixtures ----------
 
     def team_fixtures(self, gw: int) -> dict[int, list[tuple[int, bool, int]]]:
@@ -272,8 +316,9 @@ class Model:
         """Fill in expected points per gameweek for every player."""
         per_gw = {gw: self.team_fixtures(gw) for gw in gws}
         for p in self.players:
-            base = p.per_game
             for gw in gws:
+                p.avail_by_gw[gw] = self.availability_in(p, gw)
+                base = p.fit_per_game * p.avail_by_gw[gw]
                 fxs = per_gw[gw].get(p.team, [])
                 p.xpts_by_gw[gw] = sum(
                     base * self.fixture_multiplier(p.pos, d, h) for _, h, d in fxs

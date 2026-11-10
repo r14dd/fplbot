@@ -333,7 +333,7 @@ def pick_squad(
     pool = [
         p
         for p in model.players
-        if p.id not in exclude and p.availability > 0 and sc[p.id] > 0
+        if p.id not in exclude and sc[p.id] > 0
     ]
     have = {p.id for p in pool}
     pool.extend(p for p in locked if p.id not in have)
@@ -390,7 +390,7 @@ def suggest_transfers(
 
     base = _value(squad, sc)
     in_ids = {p.id for p in squad}
-    pool = [p for p in model.players if p.id not in in_ids and p.availability > 0]
+    pool = [p for p in model.players if p.id not in in_ids and sc[p.id] > 0]
     total_spend = sum(p.price for p in squad)
 
     out: list[dict] = []
