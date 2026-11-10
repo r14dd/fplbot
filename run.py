@@ -115,7 +115,21 @@ def save_squad(squad: list[Player], bank: float, ft: int, sell: dict | None = No
     print(f"  saved -> {SQUAD_FILE}")
 
 
-def show_squad(model: Model, squad: list[Player], gws: list[int]) -> None:
+def free_transfers(history: dict) -> int:
+    """Free transfers for the next deadline, walked from the entry's history.
+
+    One is added per gameweek up to 5; a Wildcard or Free Hit week neither
+    spends nor adds any.
+    """
+    chips = {c["event"]: c["name"] for c in history["chips"]}
+    ft = 1
+    for r in history["current"][1:]:
+        if chips.get(r["event"]) not in ("wildcard", "freehit"):
+            ft = min(5, max(ft - r["event_transfers"], 0) + 1)
+    return ft
+
+
+def show_squad(model: Model, squad: list[Player], gws: list[int], bank: float | None = None) -> None:
     lu = best_xi(squad, lambda p: model.horizon(p, gws))
     cost = sum(p.price for p in squad)
     print(f"\n  XI ({lu.formation}) — {lu.points:.1f} xP over GW{gws[0]}-{gws[-1]}")
@@ -125,7 +139,7 @@ def show_squad(model: Model, squad: list[Player], gws: list[int]) -> None:
         print(f"    {p.pos_name}  {p.name+star:<20} {p.team_short:<4} "
               f"£{p.price:<5.1f} {model.horizon(p, gws):5.1f} xP")
     print("  Bench:", ", ".join(f"{p.name} (£{p.price:.1f})" for p in lu.bench))
-    print(f"  Cost £{cost:.1f}m | ITB £{BUDGET - cost:.1f}m")
+    print(f"  Cost £{cost:.1f}m | ITB £{BUDGET - cost if bank is None else bank:.1f}m")
 
 
 def cmd_squad(args) -> None:
@@ -195,10 +209,14 @@ def cmd_sync(args) -> None:
             for p in picks["picks"] if p.get("selling_price")}
     squad = [resolve(model, str(i)) for i in ids]
     bank = picks.get("entry_history", {}).get("bank", 0) / 10
-    save_squad(squad, bank, 1, sell)
+    # transfers already made for the coming deadline are not in the history yet
+    pending = sum(t["event"] > gw for t in api.get(f"entry/{args.entry}/transfers/", force=True))
+    ft = max(free_transfers(api.entry_history(args.entry, force=True)) - pending, 0)
+    save_squad(squad, bank, ft, sell)
     gws = horizon_gws(model, args.horizon)
     model.project(gws)
-    show_squad(model, squad, gws)
+    show_squad(model, squad, gws, bank)
+    print(f"  Free transfers: {ft}")
 
 
 def cmd_compare(args) -> None:
@@ -224,13 +242,22 @@ def cmd_rank(args) -> None:
         mgrs.append({**r, "picks": picks})
     me = next(m for m in mgrs if m["entry"] == args.entry)
     by_id = model.by_id()
+    mine = SQUAD_FILE.exists()
+    if mine:
+        # Rivals stay frozen on last week's XI; you are simulated on the best XI
+        # from the saved squad, keeping last week's captain if he still starts.
+        lu = best_xi(load_squad(model)[0], lambda p: p.xpts_by_gw.get(gw, 0))
+        old_cap = next((p for p, mu in me["picks"] if mu > 1), None)
+        cap = old_cap if any(p.id == old_cap for p in lu.xi) else lu.captain.id
+        me["picks"] = [(p.id, 2 if p.id == cap else 1) for p in lu.xi]
     ranks, means = rk.simulate(model, gw, mgrs, args.sims, k)
     if args.tc:
         base = ranks[mgrs.index(me)][1] / args.sims
         me["picks"] = [(p, 3 if mu == 2 else mu) for p, mu in me["picks"]]
         ranks, means = rk.simulate(model, gw, mgrs, args.sims, k)
         print(f"  Triple Captain on: P(1st) {base:.1%} -> {ranks[mgrs.index(me)][1]/args.sims:.1%}")
-    print(f"  GW{gw}, {args.sims} sims, dispersion {k:.2f}; rivals frozen on GW{cur} squads")
+    print(f"  GW{gw}, {args.sims} sims, dispersion {k:.2f}; rivals frozen on GW{cur} squads"
+          + (f", {me['name']} on the saved squad's best XI" if mine else ""))
     print("  not modelled: team correlation, rival chips/transfers, autosubs")
     print(f"  {'manager':<22}{'total':>6}{'xGW':>7}{'P(1st)':>8}{'P(top2)':>9}")
     for i, m in sorted(enumerate(mgrs), key=lambda t: -ranks[t[0]][1]):
