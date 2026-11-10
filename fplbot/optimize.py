@@ -129,6 +129,14 @@ def _value(squad: list[Player], sc: dict[int, float]) -> float:
     return best + cap + BENCH_WEIGHT * (total - best)
 
 
+def week_score(model, gws: list[int]):
+    """Next GW's xP: lineup, captain and bench are one-week decisions. The run's
+    xP breaks ties (blank weeks leave many players on 0) without moving totals."""
+    def score(p: Player) -> float:
+        return p.xpts_by_gw.get(gws[0], 0.0) + 1e-6 * model.horizon(p, gws)
+    return score
+
+
 def best_xi(squad: list[Player], score) -> Lineup:
     """Pick the highest-scoring legal XI from a 15-man squad."""
     by_pos: dict[int, list[Player]] = {pos: [] for pos in POS_NAME}

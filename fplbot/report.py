@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from .model import POS_NAME, Model, Player
-from .optimize import best_xi, suggest_transfers
+from .optimize import best_xi, suggest_transfers, week_score
 
 
 def _deadline(model: Model, gw: int) -> str:
@@ -105,16 +105,19 @@ def build(
         L.append("")
 
     if squad:
-        lu = best_xi(squad, lambda p: model.horizon(p, gws))
-        L.append(f"## Your XI ({lu.formation}) — {lu.points:.1f} xP over the run")
+        # The run horizon only drives transfers; the lineup is this week's call.
+        nxt = week_score(model, gws)
+        lu = best_xi(squad, nxt)
+        L.append(f"## Your GW{gw} XI ({lu.formation}) — {lu.points:.1f} xP "
+                 f"(+{nxt(lu.captain):.1f} captain)")
         L.append("")
         L.append(HEAD)
         order = {1: 0, 2: 1, 3: 2, 4: 3}
-        for p in sorted(lu.xi, key=lambda x: (order[x.pos], -model.horizon(x, gws))):
+        for p in sorted(lu.xi, key=lambda x: (order[x.pos], -nxt(x))):
             L.append(_row(p, model, gws))
         L.append("")
         L.append(f"**Captain:** {lu.captain.name} ({lu.captain.team_short}) — "
-                 f"{lu.captain.xpts_by_gw.get(gw, 0):.1f} xP  ")
+                 f"{nxt(lu.captain):.1f} xP  ")
         L.append(f"**Vice:** {lu.vice.name} ({lu.vice.team_short})")
         L.append("")
         L.append("**Bench** (order matters — autosubs only fire for a starter "
@@ -122,7 +125,7 @@ def build(
         for i, p in enumerate(lu.bench, 1):
             tag = "GK" if p.pos == 1 else str(i - 1)
             L.append(f"{i}. [{tag}] {p.name} ({p.team_short}, {p.price:.1f}) — "
-                     f"{model.horizon(p, gws):.1f} xP")
+                     f"{nxt(p):.1f} xP")
         L.append("")
 
         alerts = [p for p in squad if p.availability < 1]

@@ -18,7 +18,7 @@ from pathlib import Path
 
 from fplbot import api
 from fplbot.model import Model, Player
-from fplbot.optimize import BUDGET, best_xi, pick_squad, suggest_transfers
+from fplbot.optimize import BUDGET, best_xi, pick_squad, suggest_transfers, week_score
 from fplbot.report import build as build_report
 from fplbot.card import card, render
 from fplbot import rank as rk
@@ -152,14 +152,16 @@ def selling_prices(model: Model, entry: int, history: dict, ids: list[int]) -> d
 
 
 def show_squad(model: Model, squad: list[Player], gws: list[int], bank: float | None = None) -> None:
-    lu = best_xi(squad, lambda p: model.horizon(p, gws))
+    nxt = week_score(model, gws)
+    lu = best_xi(squad, nxt)
     cost = sum(p.price for p in squad)
-    print(f"\n  XI ({lu.formation}) — {lu.points:.1f} xP over GW{gws[0]}-{gws[-1]}")
+    print(f"\n  GW{gws[0]} XI ({lu.formation}) — {lu.points:.1f} xP "
+          f"(run GW{gws[0]}-{gws[-1]} in last column)")
     order = {1: 0, 2: 1, 3: 2, 4: 3}
-    for p in sorted(lu.xi, key=lambda x: (order[x.pos], -model.horizon(x, gws))):
+    for p in sorted(lu.xi, key=lambda x: (order[x.pos], -nxt(x))):
         star = " (C)" if p.id == lu.captain.id else " (V)" if p.id == lu.vice.id else ""
         print(f"    {p.pos_name}  {p.name+star:<20} {p.team_short:<4} "
-              f"£{p.price:<5.1f} {model.horizon(p, gws):5.1f} xP")
+              f"£{p.price:<5.1f} {nxt(p):5.1f} xP  {model.horizon(p, gws):5.1f} run")
     print("  Bench:", ", ".join(f"{p.name} (£{p.price:.1f})" for p in lu.bench))
     print(f"  Cost £{cost:.1f}m | ITB £{BUDGET - cost if bank is None else bank:.1f}m")
 
