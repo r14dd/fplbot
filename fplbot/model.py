@@ -223,13 +223,20 @@ class Model:
             p.data_thin = p.minutes < min(MIN_MINUTES_TRUSTED, self.sample_games * 45.0)
 
     def _positional_priors(self) -> dict[int, float]:
-        """Average points per 90 by position, from well-established players."""
+        """Average points per 90 by position, from well-established players.
+
+        'Established' is half the minutes available so far, capped at 900. A
+        flat 900 means ever-present until GW10 and nobody at all before it:
+        the FWD prior fell back to 3.0 and every forward was shrunk below
+        every defender.
+        """
+        threshold = min(900.0, self.sample_games * 45.0)
         priors = {}
         for pos in POS_NAME:
             rates = [
                 p.total_points / (p.minutes / 90.0)
                 for p in self.players
-                if p.pos == pos and p.minutes >= 900
+                if p.pos == pos and p.minutes >= threshold
             ]
             priors[pos] = sum(rates) / len(rates) if rates else 3.0
         return priors
