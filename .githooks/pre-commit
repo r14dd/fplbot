@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Runs checks.sh before every commit. The gate's own files only change
+# with GATE_EDIT=1, so a failing scenario can't be "fixed" by editing it.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+GATE_PATHS=(checks.sh scenarios .githooks .claude/settings.json)
+
+if [ "${GATE_EDIT:-}" != "1" ]; then
+  touched="$(git status --porcelain -- "${GATE_PATHS[@]}")"
+  if [ -n "$touched" ]; then
+    echo "gate: these gate files changed:" >&2
+    echo "$touched" >&2
+    echo "gate: revert them, or commit with GATE_EDIT=1 if the change is meant." >&2
+    exit 1
+  fi
+fi
+
+exec ./checks.sh
