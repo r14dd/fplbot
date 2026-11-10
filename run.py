@@ -187,7 +187,7 @@ def cmd_week(args) -> None:
     if SQUAD_FILE.exists():
         squad, bank, ft, sell = load_squad(model)
         sell = {int(k): float(v) for k, v in (sell or {}).items()}
-    md = build_report(model, gws, squad, bank or 0.0, 1 if ft is None else ft, sell)
+    md = build_report(model, gws, squad, bank or 0.0, 1 if ft is None else ft, sell, args.tc)
     REPORTS.mkdir(exist_ok=True)
     out = REPORTS / f"GW{gws[0]:02d}.md"
     out.write_text(md)
@@ -263,7 +263,8 @@ def cmd_compare(args) -> None:
 def cmd_rank(args) -> None:
     model = load_model(args.refresh)
     gw = args.gw or model.next_gw
-    model.project([gw])
+    gws = list(range(gw, min(gw + args.horizon, 39)))  # the run only breaks lineup ties
+    model.project(gws)
     cur = model.started_gw
     k = rk.dispersion(list(range(1, model.finished_gws + 1)))
     mgrs = []
@@ -278,7 +279,7 @@ def cmd_rank(args) -> None:
     if mine:
         # Rivals stay frozen on last week's XI; you are simulated on the best XI
         # from the saved squad, keeping last week's captain if he still starts.
-        lu = best_xi(load_squad(model)[0], lambda p: p.xpts_by_gw.get(gw, 0))
+        lu = best_xi(load_squad(model)[0], week_score(model, gws))
         old_cap = next((p for p, mu in me["picks"] if mu > 1), None)
         cap = old_cap if any(p.id == old_cap for p in lu.xi) else lu.captain.id
         me["picks"] = [(p.id, 2 if p.id == cap else 1) for p in lu.xi]
@@ -347,6 +348,7 @@ def main() -> None:
 
     s = sub.add_parser("week", parents=[common], help="write the weekly report")
     s.add_argument("--stdout", action="store_true")
+    s.add_argument("--tc", action="store_true", help="triple your captain")
     s.set_defaults(func=cmd_week)
 
     s = sub.add_parser("transfers", parents=[common], help="rank transfer options")

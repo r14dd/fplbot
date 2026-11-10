@@ -72,6 +72,7 @@ def build(
     bank: float = 0.0,
     free_transfers: int = 1,
     sell_prices: dict[int, float] | None = None,
+    tc: bool = False,
 ) -> str:
     gw = gws[0]
     L = []
@@ -108,8 +109,9 @@ def build(
         # The run horizon only drives transfers; the lineup is this week's call.
         nxt = week_score(model, gws)
         lu = best_xi(squad, nxt)
-        L.append(f"## Your GW{gw} XI ({lu.formation}) — {lu.points:.1f} xP "
-                 f"(+{nxt(lu.captain):.1f} captain)")
+        extra = (2 if tc else 1) * nxt(lu.captain)
+        L.append(f"## Your GW{gw} XI ({lu.formation}) — {lu.points + extra:.1f} xP "
+                 f"(XI {lu.points:.1f} + {extra:.1f} {'triple ' if tc else ''}captain)")
         L.append("")
         L.append(HEAD)
         order = {1: 0, 2: 1, 3: 2, 4: 3}
