@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Claude Code PreToolUse hook: keeps an agent from editing the gate's files
-# or skipping the pre-commit hook. Reads the tool call as JSON on stdin.
+# PreToolUse hook: keeps an agent from editing the gate's files or skipping
+# the pre-commit hook. Reads the tool call as JSON on stdin.
 set -euo pipefail
 
 input="$(cat)"
@@ -12,11 +12,14 @@ deny() {
   exit 0
 }
 
+shopt -s nocasematch
 case "$tool" in
   Bash)
     cmd="$(jq -r '.tool_input.command // ""' <<<"$input")"
-    if grep -Eq -e '--no-verify|core\.hooksPath|GATE_EDIT|\.git/hooks|\.githooks' <<<"$cmd" ||
-       grep -Eq -e 'git .*commit.* -[a-zA-Z]*n' <<<"$cmd"; then
+    skip='--no-ver|core\.hookspath|GATE_EDIT|\.git/hooks'
+    # -n is the short form of --no-verify; look only inside the commit command.
+    short='git[^;&|]*commit[^;&|]* -[a-z]*n'
+    if [[ $cmd =~ $skip || $cmd =~ $short ]]; then
       deny "The commit gate is not to be skipped or changed. Fix the code so ./checks.sh passes; if a scenario looks wrong, stop and say so."
     fi
     ;;
