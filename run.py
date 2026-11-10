@@ -5,6 +5,7 @@
     python3 run.py week               full weekly report for your squad
     python3 run.py transfers          just the transfer table
     python3 run.py sync --entry 1234  pull your real squad from the FPL site
+    python3 run.py freehit --gw 12    one-week Free Hit squad on your selling value
     python3 run.py refresh            force re-download of all data
 """
 
@@ -131,6 +132,25 @@ def free_transfers(history: dict) -> int:
     return ft
 
 
+def selling_prices(model: Model, entry: int, history: dict, ids: list[int]) -> dict[str, float]:
+    """Purchase price plus half of any rise (in 0.1 steps, rounded down); a fall is
+    passed on in full. Purchase price is the latest buy outside a Free Hit week,
+    whose moves revert, or the GW1 price for a player held since the start."""
+    fh = {c["event"] for c in history["chips"] if c["name"] == "freehit"}
+    bought = {}
+    for t in sorted(api.get(f"entry/{entry}/transfers/", force=True), key=lambda t: t["time"]):
+        if t["event"] not in fh:
+            bought[t["element_in"]] = t["element_in_cost"]
+    by_id = model.by_id()
+    out = {}
+    for pid in ids:
+        now = round(by_id[pid].price * 10)
+        hist = api.element_summary(pid)["history"] if pid not in bought else []
+        buy = bought[pid] if pid in bought else hist[0]["value"] if hist else now
+        out[str(pid)] = (now if now <= buy else buy + (now - buy) // 2) / 10
+    return out
+
+
 def show_squad(model: Model, squad: list[Player], gws: list[int], bank: float | None = None) -> None:
     lu = best_xi(squad, lambda p: model.horizon(p, gws))
     cost = sum(p.price for p in squad)
@@ -202,24 +222,29 @@ def cmd_sync(args) -> None:
             "  run 'python3 run.py week'. Come back to sync once GW1 has started."
         )
     gw = model.started_gw
+    history = api.entry_history(args.entry, force=True)
+    # A live Free Hit squad reverts after the week: save the squad it reverts to.
+    fh_live = any(c["event"] == gw and c["name"] == "freehit" for c in history["chips"])
+    src = gw - 1 if fh_live else gw
     try:
-        picks = api.entry_picks(args.entry, gw, force=True)
+        picks = api.entry_picks(args.entry, src, force=True)
     except Exception as exc:
-        raise SystemExit(f"could not read entry {args.entry} for GW{gw}: {exc}")
+        raise SystemExit(f"could not read entry {args.entry} for GW{src}: {exc}")
+    if fh_live:
+        print(f"  Free Hit is live in GW{gw}; saving the GW{src} squad it reverts to")
     ids = [p["element"] for p in picks["picks"]]
-    # selling_price is only present on the authenticated my-team endpoint
-    sell = {str(p["element"]): p["selling_price"] / 10
-            for p in picks["picks"] if p.get("selling_price")}
     squad = [resolve(model, str(i)) for i in ids]
     bank = picks.get("entry_history", {}).get("bank", 0) / 10
+    # the public picks carry no selling_price, so rebuild it from the transfer record
+    sell = selling_prices(model, args.entry, history, ids)
     # transfers already made for the coming deadline are not in the history yet
-    pending = sum(t["event"] > gw for t in api.get(f"entry/{args.entry}/transfers/", force=True))
-    ft = max(free_transfers(api.entry_history(args.entry, force=True)) - pending, 0)
+    pending = sum(t["event"] > gw for t in api.get(f"entry/{args.entry}/transfers/"))
+    ft = max(free_transfers(history) - pending, 0)
     save_squad(squad, bank, ft, sell, args.entry)
     gws = horizon_gws(model, args.horizon)
     model.project(gws)
     show_squad(model, squad, gws, bank)
-    print(f"  Free transfers: {ft}")
+    print(f"  Free transfers: {ft} | selling value £{sum(sell.values()) + bank:.1f}m incl. bank")
 
 
 def cmd_compare(args) -> None:
@@ -279,6 +304,20 @@ def cmd_rank(args) -> None:
         print(f"    {by_id[pid].name:<14}{by_id[pid].xpts_by_gw.get(gw,0):>5.1f} xP  {rr[mi][1]/args.sims:>6.1%}")
 
 
+def cmd_freehit(args) -> None:
+    model = load_model(args.refresh)
+    gw = args.gw or horizon_gws(model, 1)[0]
+    model.project([gw])
+    squad, bank, _, sell = load_squad(model)
+    budget = round(bank + sum(float(sell.get(str(p.id), p.price)) for p in squad), 1)
+    priced = "selling value" if sell else "CURRENT prices (no sell_prices saved — sync first)"
+    print(f"  Free Hit GW{gw}: budget £{budget:.1f}m = {priced} + bank")
+    fh = pick_squad(model, [gw], budget=budget)
+    show_squad(model, fh, [gw], budget - sum(p.price for p in fh))
+    keep = {p.id for p in squad} & {p.id for p in fh}
+    print(f"  Kept from your squad: {len(keep)}/15. The squad reverts after GW{gw}.")
+
+
 def cmd_refresh(args) -> None:
     api.bootstrap(force=True)
     api.fixtures(force=True)
@@ -331,6 +370,11 @@ def main() -> None:
     s.add_argument("--entry", type=int, default=6412208)
     s.add_argument("--tc", action="store_true", help="triple your captain")
     s.set_defaults(func=cmd_rank)
+
+    s = sub.add_parser("freehit", parents=[common],
+                       help="best one-week squad for a Free Hit, on your selling value")
+    s.add_argument("--gw", type=int, help="gameweek to play it in (default: next)")
+    s.set_defaults(func=cmd_freehit)
 
     s = sub.add_parser("refresh", parents=[common], help="force re-download of all data")
     s.set_defaults(func=cmd_refresh)
