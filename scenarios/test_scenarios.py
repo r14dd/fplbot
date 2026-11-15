@@ -202,6 +202,53 @@ class Scenarios(unittest.TestCase):
         for *_, gain, net, _itb in self.transfers():
             self.assertEqual(net, gain)
 
+    # ---- 3b. paired moves reach what single transfers cannot --------------
+
+    def test_paired_moves_are_legal_and_out_of_single_reach(self):
+        out = self.cli("transfers", "--top", "25")
+        pairs = re.findall(
+            r"SELL (.+?) \+ (.+?)  BUY (.+?) \((\w+), £[\d.]+\) \+ (.+?) \((\w+), £[\d.]+\)\s+"
+            r"([+-][\d.]+) xP\s+net ([+-][\d.]+)\s+ITB £(-?[\d.]+)m", out)
+        self.assertTrue(pairs, "no paired move surfaced")
+        by_name = {BY_ID[i]["web_name"]: BY_ID[i] for i in SQUAD_IDS}
+        bank = SQUAD["bank"]
+        hits = max(0, 2 - SQUAD["free_transfers"]) * HIT
+        nets = []
+        for o1, o2, i1, c1, i2, c2, gain, net, itb in pairs:
+            sold = [by_name[o1], by_name[o2]]
+            bought = [BY_NAME_CLUB[(i1, c1)], BY_NAME_CLUB[(i2, c2)]]
+            self.assertNotEqual(sold[0]["id"], sold[1]["id"])
+            self.assertNotEqual(bought[0]["id"], bought[1]["id"])
+            for b in bought:
+                self.assertNotIn(b["id"], SQUAD_IDS)
+            self.assertEqual(sorted(p["element_type"] for p in sold),
+                             sorted(p["element_type"] for p in bought), "pair changes positions")
+            after = [i for i in SQUAD_IDS if i not in {s["id"] for s in sold}] + [b["id"] for b in bought]
+            self.assertLessEqual(max(Counter(BY_ID[i]["team"] for i in after).values()), MAX_PER_CLUB)
+
+            sells = [SELL[s["id"]] for s in sold]
+            prices = [b["now_cost"] / 10 for b in bought]
+            left = bank + sum(sells) - sum(prices)
+            self.assertGreaterEqual(float(itb), 0.0, "pair costs more than you have")
+            self.assertAlmostEqual(float(itb), left, delta=0.051)
+            self.assertAlmostEqual(float(net), float(gain) - hits, delta=0.011)
+
+            # Out of single reach: some buy costs more than the bank plus any
+            # one same-position sale could fund on its own.
+            def single_ok(b):
+                return any(b["now_cost"] / 10 <= bank + SELL[s["id"]] + 1e-9
+                           for s in sold if s["element_type"] == b["element_type"])
+            if sold[0]["element_type"] == sold[1]["element_type"]:
+                # Either sale can fund either buy: try both assignments.
+                as_singles = any(
+                    prices[0] <= bank + x + 1e-9 and prices[1] <= bank + y + 1e-9
+                    for x, y in (sells, sells[::-1]))
+                self.assertFalse(as_singles, "both buys work as singles")
+            else:
+                self.assertFalse(all(single_ok(b) for b in bought), "both buys work as singles")
+            nets.append(float(net))
+        self.assertEqual(nets, sorted(nets, reverse=True), "pairs are not ranked by net gain")
+
     # ---- 4. a Free Hit squad fits the selling value ----------------------
 
     def test_freehit_fits_selling_value(self):
