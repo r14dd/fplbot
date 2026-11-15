@@ -18,7 +18,7 @@ from pathlib import Path
 
 from fplbot import api
 from fplbot.model import Model, Player
-from fplbot.optimize import BUDGET, best_xi, pick_squad, suggest_transfers, week_score
+from fplbot.optimize import BUDGET, best_xi, pick_squad, suggest_pairs, suggest_transfers, week_score
 from fplbot.report import build as build_report
 from fplbot.card import card, render
 from fplbot import rank as rk
@@ -206,7 +206,17 @@ def cmd_transfers(args) -> None:
         print(f"    OUT {m['out'].name:<18} -> IN {m['in'].name:<18} "
               f"({m['in'].team_short}, £{m['in'].price:.1f})  "
               f"{m['gain']:+.2f} xP  net {m['net']:+.2f}   ITB £{m['bank_after']:.1f}m")
-    if moves and moves[0]["net"] < 1.0:
+    pairs = suggest_pairs(model, squad, gws, bank, ft, sell)
+    if pairs:
+        hits = max(0, 2 - ft) * 4
+        print(f"\n  Paired moves (one sale funds the other buy; net includes a -{hits} hit):\n")
+        for m in pairs:
+            (o1, o2), (a, b) = m["out"], m["in"]
+            print(f"    SELL {o1.name} + {o2.name}  BUY {a.name} ({a.team_short}, £{a.price:.1f})"
+                  f" + {b.name} ({b.team_short}, £{b.price:.1f})  {m['gain']:+.2f} xP"
+                  f"  net {m['net']:+.2f}   ITB £{m['bank_after']:.1f}m")
+    best = max((m["net"] for m in moves + pairs), default=None)
+    if best is not None and best < 1.0:
         print("\n  Best move nets < 1 xP after the 4-point hit — don't transfer." if ft == 0 else
               "\n  Best move gains < 1 xP — rolling the transfer is likely better.")
 

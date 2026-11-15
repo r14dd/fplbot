@@ -424,3 +424,71 @@ def suggest_transfers(
             )
     out.sort(key=lambda d: d["net"], reverse=True)
     return out[:top_n]
+
+
+def suggest_pairs(
+    model: Model,
+    squad: list[Player],
+    gws: list[int],
+    bank: float = 0.0,
+    free_transfers: int = 1,
+    sell_prices: dict[int, float] | None = None,
+    top_n: int = 5,
+) -> list[dict]:
+    """Rank two-for-two moves that single transfers cannot reach: at least one
+    buy is unaffordable on its own and is funded by the other sale."""
+    sell_prices = sell_prices or {}
+    sc = {p.id: model.horizon(p, gws) for p in model.players}
+    sell = [sell_prices.get(p.id, p.price) for p in squad]
+
+    base = _value(squad, sc)
+    in_ids = {p.id for p in squad}
+    by_pos: dict[int, list[Player]] = {}
+    for p in model.players:
+        if p.id not in in_ids and sc[p.id] > 0:
+            by_pos.setdefault(p.pos, []).append(p)
+    # Same candidate rule as the squad optimizer's pair search.
+    cands = {}
+    for pos, ps in by_pos.items():
+        best = sorted(ps, key=lambda p: sc[p.id], reverse=True)[:18]
+        cheap = sorted(ps, key=lambda p: p.price)[:8]
+        cands[pos] = list({p.id: p for p in best + cheap}.values())
+
+    hits = max(0, 2 - free_transfers) * HIT_COST
+    out: list[dict] = []
+    for i in range(len(squad)):
+        for j in range(i + 1, len(squad)):
+            pi, pj = squad[i], squad[j]
+            rest = [q for k, q in enumerate(squad) if k != i and k != j]
+            rest_clubs = Counter(q.team for q in rest)
+            cash = bank + sell[i] + sell[j]
+            same = pi.pos == pj.pos
+            for a in cands.get(pi.pos, ()):
+                if rest_clubs[a.team] >= MAX_PER_CLUB:
+                    continue
+                for b in cands.get(pj.pos, ()):
+                    if same and b.id <= a.id:
+                        continue  # (a, b) and (b, a) are the same move
+                    if a.price + b.price > cash + 1e-9:
+                        continue
+                    if rest_clubs[b.team] + (b.team == a.team) >= MAX_PER_CLUB:
+                        continue
+                    if same:
+                        # Either sale can fund either buy; dearest with dearest
+                        # is the assignment most likely to work as two singles.
+                        lo, hi = sorted((a.price, b.price))
+                        if (hi <= bank + max(sell[i], sell[j]) + 1e-9
+                                and lo <= bank + min(sell[i], sell[j]) + 1e-9):
+                            continue
+                    elif a.price <= bank + sell[i] + 1e-9 and b.price <= bank + sell[j] + 1e-9:
+                        continue  # both legs work as singles
+                    gain = _value(rest + [a, b], sc) - base
+                    out.append({
+                        "out": (pi, pj),
+                        "in": (a, b),
+                        "gain": gain,
+                        "net": gain - hits,
+                        "bank_after": cash - a.price - b.price,
+                    })
+    out.sort(key=lambda d: d["net"], reverse=True)
+    return out[:top_n]
