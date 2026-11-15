@@ -3,10 +3,10 @@
 State carried over from the old Mac on 2026-11-12.
 
 ## Next steps
-1. On request: backtest GW4 to GW10 with no lookahead. Baselines are season points per game and last four games. Report bias by position and price, tune at most two constants. Needs element-summary history for all ~670 players (`data/` is not in git). Done when the report compares model captain against always-top-scorer.
-2. Low value, unfixed: return dates are compared with the GW deadline, not kickoff; the "rolling the transfer" hint shows at five free transfers; `week --stdout` still writes `reports/GWnn.md` (`run.py:191`).
+1. Low value, unfixed: return dates are compared with the GW deadline, not kickoff; the "rolling the transfer" hint shows at five free transfers; `week --stdout` still writes `reports/GWnn.md` (`run.py:191`).
 
 ## Gotchas
+- Backtest (`python3 backtest.py`, GW4-10, 2026-11-15): model RMSE 2.60 vs 2.94 season PPG and 2.79 last-four; captain picks 49 pts vs 29 always-top-scorer. Grids over SHRINK_90S, REGRESS_W, SHRINK_STARTS are flat on GW8-10 holdout, so constants unchanged. Needs the element-summary cache in `data/`.
 - python.org Python 3.14 has no CA bundle: fetches fail with CERTIFICATE_VERIFY_FAILED. Run `SSL_CERT_FILE=/etc/ssl/cert.pem ./weekly.sh`, or run `Install Certificates.command` once.
 - `transfers` lists paired moves only when a buy is unaffordable as a single; club-cap-blocked pairs and the weekly report are not covered.
 - `sync` before a gameweek kicks off saves the previous gameweek's squad. During a live Free Hit it saves the squad from gameweek minus one.
